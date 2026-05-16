@@ -8,7 +8,7 @@ import datetime
 # 모바일 화면 최적화 세팅
 st.set_page_config(page_title="하이모바일 주식 매니저", layout="centered")
 
-st.title("📱 하이모바일 맞춤형 주식 매니저")
+st.title("📱 하이모바일 주식 매니저")
 st.caption("모바일 브라우저 위장 엔진 탑재 (클라우드 IP 차단 우회 완료)")
 
 # 1. 관심종목 리스트 및 마스터 이름 사전 구축
