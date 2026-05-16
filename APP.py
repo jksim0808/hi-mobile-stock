@@ -2,16 +2,15 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
-import json
-import datetime
+import xml.etree.ElementTree as ET
 
 # 모바일 화면 최적화 세팅
 st.set_page_config(page_title="하이모바일 주식 매니저", layout="centered")
 
-st.title("📱 하이모바일 주식 매니저")
-st.caption("모바일 브라우저 위장 엔진 탑재 (클라우드 IP 차단 우회 완료)")
+st.title("📱 하이모바일 맞춤형 주식 매니저")
+st.caption("회사명 자동 검색 및 모바일 위장 엔진 탑재")
 
-# 1. 관심종목 리스트 및 마스터 이름 사전 구축
+# 1. 관심종목 리스트 초기화 (기본 세팅)
 if "my_stocks" not in st.session_state:
     st.session_state["my_stocks"] = {
         "삼성전자": "005930",
@@ -21,37 +20,21 @@ if "my_stocks" not in st.session_state:
         "현대로템": "064350"
     }
 
-# 국문 마스터 사전
-@st.cache_data
-def get_static_name_map():
-    return {
-        "005930": "삼성전자", "000660": "SK하이닉스", "005380": "현대차", 
-        "000270": "기아", "064350": "현대로템", "066570": "LG전자",
-        "035720": "카카오", "035420": "NAVER", "005490": "POSCO홀딩스",
-        "000210": "DL", "001450": "현대해상", "012330": "현대모비스"
-    }
-
-name_map = get_static_name_map()
-
 def get_mobile_naver_data(code, count=100):
-    """[특수 우회] 일반 스마트폰 브라우저로 네이버 증권에 접속한 것처럼 위장하여 시세를 가져옵니다."""
+    """일반 스마트폰 브라우저로 위장하여 네이버에서 주가 데이터와 한글 회사명을 동시에 가져옵니다."""
     try:
-        # 네이버 모바일 증권의 실제 주가 차트 API 주소 활용
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count={count}&requestType=0"
-        
-        # [핵심] Streamlit 서버가 아닌, 실제 일반 PC/아이폰 브라우저인 것처럼 헤더 정보 조작
         headers = {
             'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
             'Referer': f'https://m.stock.naver.com/domestic/stock/{code}/total'
         }
         
         response = requests.get(url, headers=headers, timeout=5)
-        
-        # XML 데이터 파싱
-        import xml.etree.ElementTree as ET
         root = ET.fromstring(response.text)
+        
+        # XML 헤더에서 네이버가 등록한 한글 회사명 추출
+        chart_info = root.find('.//chartinfo')
+        stock_name = chart_info.get('item') if chart_info is not None else None
         
         parsed_data = []
         for item in root.findall('.//item'):
@@ -59,7 +42,7 @@ def get_mobile_naver_data(code, count=100):
             parsed_data.append(data_row)
             
         if not parsed_data:
-            return pd.DataFrame()
+            return pd.DataFrame(), stock_name
             
         df = pd.DataFrame(parsed_data, columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume'])
         df['Date'] = pd.to_datetime(df['Date'], format='%Y%m%d')
@@ -67,9 +50,9 @@ def get_mobile_naver_data(code, count=100):
             df[col] = pd.to_numeric(df[col], errors='coerce')
             
         df.set_index('Date', inplace=True)
-        return df
+        return df, stock_name
     except Exception:
-        return pd.DataFrame()
+        return pd.DataFrame(), None
 
 def calculate_rsi(series, period=14):
     """RSI 기술적 지표 계산"""
@@ -81,23 +64,35 @@ def calculate_rsi(series, period=14):
     rs = ema_up / ema_down
     return 100 - (100 / (1 + rs))
 
-# 2. 관심종목 관리 창 (추가 / 삭제)
+# ==========================================
+# 2. [기능 개정] 관심종목 관리 창 (코드만 입력)
+# ==========================================
 with st.expander("⭐ 나만의 관심종목 추가/삭제 하기"):
     col1, col2 = st.columns(2)
     with col1:
-        add_name = st.text_input("추가할 회사명", placeholder="예: LG전자")
-        add_code = st.text_input("추가할 종목코드", placeholder="예: 066570")
-        if st.button("➕ 종목 추가", use_container_width=True):
-            if add_name and add_code:
+        st.markdown("**종목 추가 (자동 이름 검색)**")
+        add_code = st.text_input("종목코드 6자리 입력", placeholder="예: 066570")
+        
+        if st.button("➕ 관심종목 등록", use_container_width=True):
+            if add_code:
                 clean_code = ''.join(filter(str.isdigit, add_code)).zfill(6)
-                st.session_state["my_stocks"][add_name] = clean_code
-                name_map[clean_code] = add_name
-                st.success(f"'{add_name}' 종목이 추가되었습니다!")
-                st.rerun()
+                
+                # 등록하기 전, 네이버 서버에 접속해서 진짜 회사 이름을 먼저 알아옵니다.
+                with st.spinner("네이버 금융에서 회사명을 조회 중..."):
+                    _, auto_stock_name = get_mobile_naver_data(clean_code, count=1)
+                
+                if auto_stock_name:
+                    # 알아온 한글 이름으로 관심종목 사전에 자동 등록
+                    st.session_state["my_stocks"][auto_stock_name] = clean_code
+                    st.success(f"🎉 **'{auto_stock_name}'** 등록 완료!")
+                    st.rerun()
+                else:
+                    st.error("존재하지 않는 종목코드이거나 상장 폐지된 종목입니다.")
             else:
-                st.error("이름과 코드를 모두 입력해주세요.")
+                st.error("종목코드를 입력해주세요.")
                 
     with col2:
+        st.markdown("**종목 삭제**")
         delete_target = st.selectbox("삭제할 종목 선택", list(st.session_state["my_stocks"].keys()))
         if st.button("❌ 선택 종목 삭제", use_container_width=True):
             if delete_target in st.session_state["my_stocks"]:
@@ -107,7 +102,9 @@ with st.expander("⭐ 나만의 관심종목 추가/삭제 하기"):
 
 st.markdown("---")
 
+# ==========================================
 # 3. 저장된 종목 불러와서 터치 분석하기
+# ==========================================
 st.subheader("저장된 관심종목 목록")
 options_list = list(st.session_state["my_stocks"].keys())
 
@@ -120,13 +117,11 @@ else:
     
     # 분석 시작 버튼
     if st.button("🚀 모멘텀 분석 시작", use_container_width=True):
-        stock_name = name_map.get(target_ticker, selected_stock)
-        
-        # 일반 사용자로 완벽히 위장하여 네이버에서 직접 데이터 수집
-        df = get_mobile_naver_data(target_ticker)
+        # 안전하게 데이터 다시 호출
+        df, stock_name = get_mobile_naver_data(target_ticker)
         
         if df.empty:
-            st.error(f"⚠️ 금융 보안벽 우회 중입니다. 잠시 후 [모멘텀 분석 시작] 버튼을 한 번만 더 눌러주세요.")
+            st.error(f"⚠️ 시세 데이터 연동 중입니다. [모멘텀 분석 시작] 버튼을 한 번만 더 눌러주세요.")
         else:
             # 기술적 지표 계산
             df['MA20'] = df['Close'].rolling(window=20).mean()
