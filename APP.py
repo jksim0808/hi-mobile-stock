@@ -12,12 +12,12 @@ st.title("📈 네이버 금융 연동 상승 모멘텀 분석기")
 st.sidebar.header("설정")
 
 # 사용자가 직접 한국 주식 종목코드 입력
-target_stocks = st.sidebar.text_input("분석할 종목 코드를 입력하세요 (쉼표 구분)", "005930, 000660, 005380, 000270")
+target_stocks = st.sidebar.text_input("분석할 종목 코드를 입력하세요 (쉼표 구분)", "005930, 000660, 005380, 000270, 066570")
 tickers = [t.strip() for t in target_stocks.split(",")]
 
 @st.cache_data
 def get_krx_stock_map():
-    """1차 안전장치: 한국거래소(KRX) 마스터 데이터를 가져옵니다."""
+    """1차 안전장치: 한국거래소 마스터 데이터 (보안 차단 시 빈 값 반환)"""
     try:
         url = 'http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13'
         df_krx = pd.read_html(url, header=0)[0]
@@ -27,21 +27,35 @@ def get_krx_stock_map():
         return {}
 
 def get_company_name_from_naver(code):
-    """2차 안전장치: 거래소에 없는 코드거나 연결 오류 시 네이버에서 직접 회사명을 파싱합니다."""
+    """2차 안전장치 [강화]: 네이버 금융 보안벽을 완전히 우회하여 실제 회사명을 긁어옵니다."""
     try:
-        url = f"https://finance.naver.com/item/main.naver?code={code}"
-        # 네이버 금융 홈에서 회사명 영역 크롤링
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        # 모바일 네이버 금융 페이지는 보안이 유연하고 가벼워 크롤링에 최적입니다.
+        url = f"https://m.stock.naver.com/domestic/stock/{code}/total"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G960N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Mobile Safari/537.36'
+        }
         response = requests.get(url, headers=headers)
-        response.encoding = 'euc-kr' # 네이버 금융 인코딩 설정
         
-        # HTML에서 <title> 태그나 종목명 영역을 정규식으로 추출
-        title_match = re.search(r'<title>(.*?)\s*:\s*네이버 금융</title>', response.text)
+        # HTML 소스코드에서 대소문자 구분 없이 <title> 태그 안의 회사명 추출
+        title_match = re.search(r'<title>(.*?)</title>', response.text, re.IGNORECASE)
         if title_match:
-            return title_match.group(1).strip()
+            raw_title = title_match.group(1).strip()
+            # 예: "LG전자 : 네이버페이 증권" -> "LG전자"만 추출
+            clean_name = raw_title.split(':')[0].strip()
+            # 만약 네이버 메인 타이틀 형식이 다를 경우를 대비한 보조 정제
+            clean_name = clean_name.replace("네이버 증권", "").replace("네이버페이 증권", "").strip()
+            if clean_name and "페이지를 찾을 수" not in clean_name:
+                return clean_name
     except Exception:
         pass
-    return f"미등록종목({code})"
+    
+    # 3차 안전장치: 자주 쓰시는 주요 대형주 수동 매핑 백업
+    backup_map = {
+        "005930": "삼성전자", "000660": "SK하이닉스", "005380": "현대차", 
+        "000270": "기아", "012330": "현대모비스", "066570": "LG전자",
+        "035720": "카카오", "035420": "NAVER", "005490": "POSCO홀딩스"
+    }
+    return backup_map.get(code, f"종목({code})")
 
 # 거래소 데이터 맵 로드
 krx_map = get_krx_stock_map()
@@ -86,13 +100,11 @@ def calculate_rsi(series, period=14):
 # 분석 실행
 if st.sidebar.button("네이버 데이터 분석 시작"):
     for ticker in tickers:
-        # 입력된 문자열에서 숫자 6자리만 추출
         clean_ticker = ''.join(filter(str.isdigit, ticker))
         if len(clean_ticker) < 6:
-            # 6자리가 안 되면 자릿수 맞춰주기 (예: 5930 -> 005930)
             clean_ticker = clean_ticker.zfill(6)
         
-        # 1차로 거래소 맵에서 찾고, 없으면 2차로 네이버 페이지에서 직접 긁어옴
+        # 1. 거래소 맵 검색 -> 2. 실패 시 강화된 네이버 모바일 크롤러 작동
         stock_name = krx_map.get(clean_ticker)
         if not stock_name:
             stock_name = get_company_name_from_naver(clean_ticker)
@@ -103,7 +115,7 @@ if st.sidebar.button("네이버 데이터 분석 시작"):
             # 데이터 수집
             df = get_naver_stock_data(clean_ticker)
             if df.empty:
-                st.error(f"[{stock_name}] 데이터를 불러오지 못했습니다. 상장 폐지되었거나 없는 코드입니다.")
+                st.error(f"[{stock_name}] 데이터를 불러오지 못했습니다. 코드를 확인해 주세요.")
                 continue
 
             # 기술적 지표 계산
