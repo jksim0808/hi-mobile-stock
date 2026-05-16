@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import requests
 import xml.etree.ElementTree as ET
-import re
+import json
 
 # 웹 페이지 설정
 st.set_page_config(page_title="하이모바일 주식 분석기", layout="wide")
@@ -15,57 +15,28 @@ st.sidebar.header("설정")
 target_stocks = st.sidebar.text_input("분석할 종목 코드를 입력하세요 (쉼표 구분)", "005930, 000660, 005380, 000270, 066570")
 tickers = [t.strip() for t in target_stocks.split(",")]
 
-@st.cache_data
-def get_krx_stock_map():
-    """1차 안전장치: 한국거래소 마스터 데이터"""
+def get_exact_company_name(code):
+    """[최종 솔루션] 웹 페이지 크롤링 대신, 네이버 자체 실시간 검색 API 데이터에서 회사명을 직접 추출합니다."""
     try:
-        url = 'http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13'
-        df_krx = pd.read_html(url, header=0)[0]
-        df_krx['종목코드'] = df_krx['종목코드'].astype(str).str.zfill(6)
-        return dict(zip(df_krx['종목코드'], df_krx['회사명']))
-    except Exception:
-        return {}
-
-def get_company_name_from_naver(code):
-    """2차 안전장치 [정밀 보완]: 타이틀 매칭 오류를 잡고 메타 태그에서 순수 회사명만 추출합니다."""
-    try:
-        url = f"https://m.stock.naver.com/domestic/stock/{code}/total"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G960N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Mobile Safari/537.36'
-        }
+        # 네이버 주식 내부 검색/시세 API 엔드포인트
+        url = f"https://polling.finance.naver.com/api/realtime/domestic/stock/{code}"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         response = requests.get(url, headers=headers)
         
-        # [정밀 수정] HTML의 공유용 메타 태그(og:title)에서 순수 회사명만 추출
-        # 예시 구조: <meta property="og:title" content="삼성전자"/>
-        meta_match = re.search(r'<meta\s+property=["\']og:title["\']\s+content=["\'](.*?)["\']', response.text, re.IGNORECASE)
-        if meta_match:
-            clean_name = meta_match.group(1).strip()
-            # 포괄적인 정제 작업 (혹시나 뒤에 붙을 군더더기 제거)
-            clean_name = clean_name.split(':')[0].split('-')[0].strip()
-            if clean_name and "네이버" not in clean_name and "페이지를" not in clean_name:
-                return clean_name
-                
-        # 만약 메타 태그 실패 시 기존 타이틀 방식의 예외 처리 강화
-        title_match = re.search(r'<title>(.*?)</title>', response.text, re.IGNORECASE)
-        if title_match:
-            raw_title = title_match.group(1).strip()
-            # "Npay 증권", "네이버페이 증권" 문자열 자체를 통째로 도려냄
-            clean_name = re.sub(r'[:\-\|]?\s*네이버페이\s*증권|\s*Npay\s*증권', '', raw_title, flags=re.IGNORECASE).strip()
-            if clean_name:
-                return clean_name
+        # JSON 데이터 분석
+        data = response.json()
+        stock_name = data['result']['areas'][0]['datas'][0]['nm'] # 'nm' 필드가 순수 한글 회사명입니다.
+        if stock_name:
+            return stock_name
     except Exception:
         pass
-    
-    # 3차 안전장치: 대형주 백업 맵
+        
+    # 백업용 대형주 사전
     backup_map = {
         "005930": "삼성전자", "000660": "SK하이닉스", "005380": "현대차", 
-        "000270": "기아", "012330": "현대모비스", "066570": "LG전자",
-        "035720": "카카오", "035420": "NAVER", "005490": "POSCO홀딩스"
+        "000270": "기아", "012330": "현대모비스", "066570": "LG전자"
     }
     return backup_map.get(code, f"종목({code})")
-
-# 거래소 데이터 맵 로드
-krx_map = get_krx_stock_map()
 
 def get_naver_stock_data(code, count=100):
     """네이버 금융에서 일별 시세를 가져오는 함수"""
@@ -111,10 +82,8 @@ if st.sidebar.button("네이버 데이터 분석 시작"):
         if len(clean_ticker) < 6:
             clean_ticker = clean_ticker.zfill(6)
         
-        # 이름 가져오기 프로세스
-        stock_name = krx_map.get(clean_ticker)
-        if not stock_name:
-            stock_name = get_company_name_from_naver(clean_ticker)
+        # 오류가 나던 캐시 및 거래소 데이터 매핑을 완전히 걷어내고 실시간 데이터 직접 조회
+        stock_name = get_exact_company_name(clean_ticker)
         
         with st.container():
             st.subheader(f"🔍 {stock_name} ({clean_ticker}) 분석 결과")
