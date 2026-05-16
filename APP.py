@@ -17,7 +17,7 @@ tickers = [t.strip() for t in target_stocks.split(",")]
 
 @st.cache_data
 def get_krx_stock_map():
-    """1차 안전장치: 한국거래소 마스터 데이터 (보안 차단 시 빈 값 반환)"""
+    """1차 안전장치: 한국거래소 마스터 데이터"""
     try:
         url = 'http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13'
         df_krx = pd.read_html(url, header=0)[0]
@@ -27,29 +27,36 @@ def get_krx_stock_map():
         return {}
 
 def get_company_name_from_naver(code):
-    """2차 안전장치 [강화]: 네이버 금융 보안벽을 완전히 우회하여 실제 회사명을 긁어옵니다."""
+    """2차 안전장치 [정밀 보완]: 타이틀 매칭 오류를 잡고 메타 태그에서 순수 회사명만 추출합니다."""
     try:
-        # 모바일 네이버 금융 페이지는 보안이 유연하고 가벼워 크롤링에 최적입니다.
         url = f"https://m.stock.naver.com/domestic/stock/{code}/total"
         headers = {
             'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G960N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Mobile Safari/537.36'
         }
         response = requests.get(url, headers=headers)
         
-        # HTML 소스코드에서 대소문자 구분 없이 <title> 태그 안의 회사명 추출
+        # [정밀 수정] HTML의 공유용 메타 태그(og:title)에서 순수 회사명만 추출
+        # 예시 구조: <meta property="og:title" content="삼성전자"/>
+        meta_match = re.search(r'<meta\s+property=["\']og:title["\']\s+content=["\'](.*?)["\']', response.text, re.IGNORECASE)
+        if meta_match:
+            clean_name = meta_match.group(1).strip()
+            # 포괄적인 정제 작업 (혹시나 뒤에 붙을 군더더기 제거)
+            clean_name = clean_name.split(':')[0].split('-')[0].strip()
+            if clean_name and "네이버" not in clean_name and "페이지를" not in clean_name:
+                return clean_name
+                
+        # 만약 메타 태그 실패 시 기존 타이틀 방식의 예외 처리 강화
         title_match = re.search(r'<title>(.*?)</title>', response.text, re.IGNORECASE)
         if title_match:
             raw_title = title_match.group(1).strip()
-            # 예: "LG전자 : 네이버페이 증권" -> "LG전자"만 추출
-            clean_name = raw_title.split(':')[0].strip()
-            # 만약 네이버 메인 타이틀 형식이 다를 경우를 대비한 보조 정제
-            clean_name = clean_name.replace("네이버 증권", "").replace("네이버페이 증권", "").strip()
-            if clean_name and "페이지를 찾을 수" not in clean_name:
+            # "Npay 증권", "네이버페이 증권" 문자열 자체를 통째로 도려냄
+            clean_name = re.sub(r'[:\-\|]?\s*네이버페이\s*증권|\s*Npay\s*증권', '', raw_title, flags=re.IGNORECASE).strip()
+            if clean_name:
                 return clean_name
     except Exception:
         pass
     
-    # 3차 안전장치: 자주 쓰시는 주요 대형주 수동 매핑 백업
+    # 3차 안전장치: 대형주 백업 맵
     backup_map = {
         "005930": "삼성전자", "000660": "SK하이닉스", "005380": "현대차", 
         "000270": "기아", "012330": "현대모비스", "066570": "LG전자",
@@ -104,7 +111,7 @@ if st.sidebar.button("네이버 데이터 분석 시작"):
         if len(clean_ticker) < 6:
             clean_ticker = clean_ticker.zfill(6)
         
-        # 1. 거래소 맵 검색 -> 2. 실패 시 강화된 네이버 모바일 크롤러 작동
+        # 이름 가져오기 프로세스
         stock_name = krx_map.get(clean_ticker)
         if not stock_name:
             stock_name = get_company_name_from_naver(clean_ticker)
