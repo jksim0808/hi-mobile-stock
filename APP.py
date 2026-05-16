@@ -60,16 +60,40 @@ def calculate_rsi(series, period=14):
     return 100 - (100 / (1 + (ema_up / ema_down)))
 
 # ==========================================
+# [신설] 3단계 판단 로직 구체적 가이드라인 탑재
+# ==========================================
+with st.expander("📖 시스템 3단계 핵심 판단 로직 및 매매 전략 설명서", expanded=False):
+    st.markdown("""
+    본 시스템은 주가의 **중장기 추세 방향성(이동평균선)**과 **단기 수급의 심리적 과열 상태(RSI)**를 결합하여 투자 리스크를 최소화하도록 설계된 스크리닝 엔진입니다.
+    
+    ### 1️⃣ 📈 매수 긍정 (상승 모멘텀 포착)
+    *   **정량적 기술 지표 기준**: `현재가 > 20일 이평선 > 60일 이평선` **AND** `50 < RSI < 70`
+    *   **차트 해석**: 주가가 중장기 상승 가속도 구간(정배열 상승 추세)에 안착해 있으면서, 단기 과열권(RSI 70 이상)에 도달하기 직전의 가장 탄력적인 무릎~어깨 구간입니다. 
+    *   **대응 전략**: 기관·외인 수급 유입이 가장 강한 타이밍이므로 **신규 진입 및 분할 매수** 관점에서 매우 유망합니다.
+    
+    ### 2️⃣ ⚠️ 진입 조율 필요 (추세 지속 및 과열 주의)
+    *   **정량적 기술 지표 기준**: `현재가 > 20일 이평선 > 60일 이평선` **AND** `(RSI ≥ 70 또는 RSI ≤ 50)`
+    *   **차트 해석**: 대세 상승 추세(정배열)는 유지되고 있으나 단기 조건이 다른 경우입니다.
+        *   **RSI 70 이상 (과매수)**: 단기 급등으로 심리적 과열권에 진입해 언제든 이익실현 매물이 나올 수 있는 고점 구간입니다.
+        *   **RSI 50 이하 (눌림목/일시 이탈)**: 상승 추세 속에서 일시적인 숨고르기나 거래량 감소로 단기 모멘텀이 죽어있는 국면입니다.
+    *   **대응 전략**: 이미 보유 중이라면 **분할 익절**을 고려하고, 신규 진입의 경우 무리한 추격 매수를 자제하고 **눌림목 조정을 기다려 가격 메리트가 생길 때** 들어가는 것이 좋습니다.
+    
+    ### 3️⃣ 💤 관망 권장 (역배열 하락 추세 또는 횡보 소외)
+    *   **정량적 기술 지표 기준**: 위의 상승 정배열 조건을 충족하지 못하는 모든 케이스 (`현재가 < 20일 이평선` 또는 `20일 이평선 < 60일 이평선` 등)
+    *   **차트 해석**: 중장기 매물대가 머리 위에 얹어져 있는 하락 역배열 구간이거나, 거래량이 실리지 않아 방향성 없이 지루하게 기어가는 소외 국면입니다.
+    *   **대응 전략**: 주가가 싸 보인다는 이유로 섣부르게 물타기를 하거나 진입하면 장기 소외될 위험이 큽니다. 추세 턴어라운드(골든크로스)가 확실히 확인될 때까지 **자금을 보존하며 관망**하는 것이 안전합니다.
+    """)
+
+# ==========================================
 # 상단 컨트롤 타워: 내 마음대로 종목 편집창
 # ==========================================
-with st.expander("🛠️ 분석 대상 종목 리스트 자유롭게 변경하기 (추가/삭제/수정)", expanded=True):
+with st.expander("🛠️ 분석 대상 종목 리스트 자유롭게 변경하기 (추가/삭제/수정)", expanded=False):
     st.markdown("**형식 가이드**: `종목명:6자리코드` 형태로 작성하고, 각 종목은 **쉼표(,)나 줄바꿈(엔터)**으로 구분해 주세요.")
     
-    # 사용자가 직접 편집할 수 있는 대형 텍스트 편집기 제공
     user_stocks_input = st.text_area(
         "현재 분석 대상 리스트 (원하는 대로 지우거나 추가해 보세요)",
         value=DEFAULT_STOCKS_TEXT,
-        height=150
+        height=120
     )
 
 # 텍스트 파싱하여 딕셔너리로 동적 변환
@@ -83,7 +107,6 @@ for item in raw_items:
         if clean_name and len(clean_code) == 6:
             current_stocks_map[clean_name] = clean_code
 
-# 현재 유효하게 파싱된 종목 개수 표시
 st.info(f"📋 현재 설정된 분석 대상 종목: 총 **{len(current_stocks_map)}**개")
 
 # ==========================================
@@ -93,17 +116,15 @@ if st.button("🚀 설정된 종목 실시간 전수 분석 시작", use_contain
     if not current_stocks_map:
         st.error("분석할 종목이 없습니다. 위의 편집창에 '종목명:종목코드' 형태로 입력되어 있는지 확인해 주세요.")
     else:
-        # 결과를 담을 3가지 분류 리스트
-        group_success = []  # 📈 상승 모멘텀 포착 (매수 긍정)
-        group_warning = []  # ⚠️ 정배열 상승세 (진입 조율 필요)
-        group_info = []     # 💤 관망 구간 (하락 추세 또는 횡보)
+        group_success = []  # 📈 매수 긍정
+        group_warning = []  # ⚠️ 진입 조율 필요
+        group_info = []     # 💤 관망 권장
         
         progress_bar = st.progress(0)
         status_text = st.empty()
         
         total_stocks = len(current_stocks_map)
         
-        # 동적으로 구성된 종목 셋 순회 분석
         for idx, (name, code) in enumerate(current_stocks_map.items()):
             status_text.text(f"⏳ 데이터 연산 중 ({idx+1}/{total_stocks}): {name} ({code})")
             progress_bar.progress((idx + 1) / total_stocks)
@@ -111,7 +132,7 @@ if st.button("🚀 설정된 종목 실시간 전수 분석 시작", use_contain
             df = get_mobile_naver_data(code)
             if df.empty:
                 time.sleep(0.1)
-                df = get_mobile_naver_data(code) # 실패 시 1회 우회 재시도
+                df = get_mobile_naver_data(code)
                 
             if not df.empty:
                 df['MA20'] = df['Close'].rolling(window=20).mean()
@@ -130,7 +151,7 @@ if st.button("🚀 설정된 종목 실시간 전수 분석 시작", use_contain
                     "RSI": f"{curr_rsi:.1f}"
                 }
                 
-                # 3단계 판단 로직
+                # 정량적 수치에 입각한 3단계 분류 매칭
                 is_trending = curr_price > ma20 > ma60
                 is_momentum = 50 < curr_rsi < 70
                 
@@ -141,7 +162,7 @@ if st.button("🚀 설정된 종목 실시간 전수 분석 시작", use_contain
                 else:
                     group_info.append(stock_info)
                     
-            time.sleep(0.04) # 서버 과부하 방지 가벼운 마진
+            time.sleep(0.04)
             
         status_text.text(f"✅ 총 {total_stocks}개 종목의 실시간 스크리닝이 완료되었습니다!")
         progress_bar.empty()
@@ -166,7 +187,7 @@ if st.button("🚀 설정된 종목 실시간 전수 분석 시작", use_contain
             if group_warning:
                 st.dataframe(pd.DataFrame(group_warning), use_container_width=True, hide_index=True)
             else:
-                st.info("조건에 일치하는 종목이 없습니다.")
+                st.info("조건에 일치하는 종 info가 없습니다.")
                 
         with col3:
             st.info(f"💤 관망 권장 ({len(group_info)}개)")
