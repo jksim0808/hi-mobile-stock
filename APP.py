@@ -5,7 +5,7 @@ import requests
 import xml.etree.ElementTree as ET
 import time
 import re
-import plotly.graph_objects as god  # 차트 시각화용 라이브러리 추가
+import plotly.graph_objects as god
 from plotly.subplots import make_subplots
 
 # 모바일 화면 최적화 및 와이드 레이아웃 설정
@@ -31,11 +31,12 @@ DEFAULT_STOCKS_TEXT = (
     "SK:034730, POSCO홀딩스:005490"
 )
 
-# 세션 상태 초기화 (클릭한 종목 정보 저장용)
 if 'selected_stock_code' not in st.session_state:
     st.session_state.selected_stock_code = None
 if 'selected_stock_name' not in st.session_state:
     st.session_state.selected_stock_name = None
+if 'screening_results' not in st.session_state:
+    st.session_state.screening_results = {"success": [], "warning": [], "info": []}
 
 def get_mobile_naver_data(code, count=100):
     """네이버 금융 피드에서 주가 및 거래량 데이터 추출"""
@@ -53,10 +54,7 @@ def get_mobile_naver_data(code, count=100):
             parsed_data.append(data_row)
         if not parsed_data: return pd.DataFrame()
         df = pd.DataFrame(parsed_data, columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume'])
-        
-        # 날짜 포맷 변환 (YYYYMMDD -> YYYY-MM-DD)
         df['Date'] = pd.to_datetime(df['Date'], format='%Y%m%d').dt.strftime('%Y-%m-%d')
-        
         for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
             df[col] = pd.to_numeric(df[col], errors='coerce')
         return df
@@ -71,57 +69,55 @@ def calculate_rsi(series, period=14):
     ema_down = down.ewm(com=period - 1, adjust=False).mean()
     return 100 - (100 / (1 + (ema_up / ema_down)))
 
-def draw_stock_chart(name, code):
-    """선택된 종목의 이동평균선 및 RSI 포함 캔들차트 생성"""
-    df = get_mobile_naver_data(code, count=100)
-    if df.empty:
-        st.error("차트 데이터를 불러오지 못했습니다.")
-        return
+# ==========================================
+# [신설] 화면 상단 배치: 3단계 판단 로직 상세 설명서
+# ==========================================
+st.markdown("### 📊 시스템 3단계 복합 판단 로직 설계서")
+lead_col1, lead_col2, lead_col3 = st.columns(3)
 
-    df['MA20'] = df['Close'].rolling(window=20).mean()
-    df['MA60'] = df['Close'].rolling(window=60).mean()
-    df['RSI'] = calculate_rsi(df['Close'])
+with lead_col1:
+    st.markdown("""
+    <div style='background-color:#e8f5e9; padding:15px; border-radius:10px; border-left:5px solid #2e7d32;'>
+        <h4 style='color:#2e7d32; margin-top:0;'>📈 1단계: 매수 긍정</h4>
+        <p style='font-size:13px; margin-bottom:5px;'><b>주가 상태:</b> 중장기 정배열 우상향</p>
+        <p style='font-size:13px; margin-bottom:5px;'><b>기술 지표:</b> 현재가 > 20일선 > 60일선</p>
+        <p style='font-size:13px; margin-bottom:5px;'><b>수급/RSI:</b> 45 ≤ RSI ≤ 65 (과열 해소)</p>
+        <p style='font-size:13px; margin-bottom:5px;'><b>거래량 가중치:</b> 당일 수급 ≥ 5일 평균의 90%</p>
+        <hr style='margin:10px 0;'>
+        <p style='font-size:12px; color:#555;'><b>매매 전략:</b> 대세 상승장 속 기관·외인 수급이 동반된 가장 탄력적인 <b>안전 눌림목 및 돌파 타점</b>입니다. 적극적 분할 매수 진입이 유망합니다.</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # 주가 차트와 RSI 차트를 위아래 2단 분할 (비율 3:1)
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                        vertical_spacing=0.05, row_heights=[0.7, 0.3])
+with lead_col2:
+    st.markdown("""
+    <div style='background-color:#fffde7; padding:15px; border-radius:10px; border-left:5px solid #fbc02d;'>
+        <h4 style='color:#f57f17; margin-top:0;'>⚠️ 2단계: 진입 조율 필요</h4>
+        <p style='font-size:13px; margin-bottom:5px;'><b>주가 상태:</b> 중장기 정배열은 유지 중</p>
+        <p style='font-size:13px; margin-bottom:5px;'><b>추세 이탈:</b> RSI > 65 (단기 과열 영역)</p>
+        <p style='font-size:13px; margin-bottom:5px;'><b>또는</b> RSI < 45 (단기 하락 심화)</p>
+        <p style='font-size:13px; margin-bottom:5px;'><b>또는</b> 당일 거래량 < 5일 평균의 90% (수급 공백)</p>
+        <hr style='margin:10px 0;'>
+        <p style='font-size:12px; color:#555;'><b>매매 전략:</b> 뼈대는 살아있으나 <b>단기 고점 과열이거나, 거래량이 메말라</b> 횡보 소외될 위험이 있습니다. 무리한 추격 매수를 자제하고 눌림목 확인 후 진입합니다.</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # 1. 메인 캔들스틱 차트 추가
-    fig.add_trace(god.Candlestick(
-        x=df['Date'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
-        name='주가', increasing_line_color='#ef5350', decreasing_line_color='#26a69a'
-    ), row=1, col=1)
+with lead_col3:
+    st.markdown("""
+    <div style='background-color:#efebe9; padding:15px; border-radius:10px; border-left:5px solid #4e342e;'>
+        <h4 style='color:#4e342e; margin-top:0;'>💤 3단계: 관망 권장</h4>
+        <p style='font-size:13px; margin-bottom:5px;'><b>주가 상태:</b> 하락 추세 또는 역배열</p>
+        <p style='font-size:13px; margin-bottom:5px;'><b>기술 지표:</b> 현재가 < 20일선 또는 20일선 < 60일선</p>
+        <p style='font-size:13px; margin-bottom:5px;'><b>지표 상태:</b> 거래량 및 RSI 수치 무관 전람</p>
+        <p style='font-size:13px; margin-bottom:5px;'><b>리스크:</b> 머리 위 장기 매물 저항 심화 상태</p>
+        <hr style='margin:10px 0;'>
+        <p style='font-size:12px; color:#555;'><b>매매 전략:</b> 주가가 저렴해 보이는 착시가 있으나 매물 벽이 두터워 <b>지하실을 파고 내려가거나 장기 소외</b>될 위험이 큽니다. 추세 전환 확인 시까지 철저히 관망합니다.</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # 이평선 추가
-    fig.add_trace(god.Scatter(x=df['Date'], y=df['MA20'], line=dict(color='#ff9800', width=1.5), name='20일선'), row=1, col=1)
-    fig.add_trace(god.Scatter(x=df['Date'], y=df['MA60'], line=dict(color='#2196f3', width=1.5), name='60일선'), row=1, col=1)
-
-    # 2. RSI 보조지표 추가
-    fig.add_trace(god.Scatter(x=df['Date'], y=df['RSI'], line=dict(color='#9c27b0', width=1.5), name='RSI'), row=2, col=1)
-    
-    # RSI 기준선 과열(65), 침체(45/30) 점선 표기
-    fig.add_hline(y=65, line_dash="dash", line_color="red", line_width=1, row=2, col=1)
-    fig.add_hline(y=45, line_dash="dash", line_color="blue", line_width=1, row=2, col=1)
-
-    # 차트 레이아웃 구성 개편
-    fig.update_layout(
-        title=f"📈 {name} ({code}) 실시간 기술적 분석 차트",
-        yaxis_title="주가 (원)",
-        yaxis2_title="RSI",
-        xaxis_rangeslider_visible=False,
-        height=550,
-        margin=dict(l=10, r=10, t=40, b=10),
-        hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
-    
-    fig.update_yaxes(fixedrange=False, row=1, col=1)
-    fig.update_yaxes(range=[10, 90], row=2, col=1)
-
-    st.plotly_chart(fig, use_container_width=True)
+st.markdown("---")
 
 # ==========================================
-# 메인 종목 세팅 및 스크리닝 컨트롤러
+# 상단 컨트롤 타워: 내 마음대로 종목 편집창
 # ==========================================
 with st.expander("🛠️ 분석 대상 종목 리스트 자유롭게 변경하기 (추가/삭제/수정)", expanded=False):
     user_stocks_input = st.text_area("현재 분석 대상 리스트", value=DEFAULT_STOCKS_TEXT, height=100)
@@ -136,11 +132,12 @@ for item in raw_items:
         if clean_name and len(clean_code) == 6:
             current_stocks_map[clean_name] = clean_code
 
-# 캐싱 시스템을 통한 연산 상태 보존
-if 'screening_results' not in st.session_state:
-    st.session_state.screening_results = {"success": [], "warning": [], "info": []}
+st.info(f"📋 현재 설정된 분석 대상 종목: 총 **{len(current_stocks_map)}**개")
 
-if st.button("🚀 종합 복합 스크리닝 전수 분석 시작", use_container_width=True):
+# ==========================================
+# 메인 제어 분석 실행
+# ==========================================
+if st.button("🚀 설정된 종목 실시간 보정형 전수 분석 시작", use_container_width=True):
     success_list, warning_list, info_list = [], [], []
     progress_bar = st.progress(0)
     total_stocks = len(current_stocks_map)
@@ -168,9 +165,14 @@ if st.button("🚀 종합 복합 스크리닝 전수 분석 시작", use_contain
                 "RSI": round(curr_rsi, 1), "거래량비율": f"{vol_ratio * 100:.1f}%"
             }
             
-            if curr_price > ma20 > ma60 and 45 <= curr_rsi <= 65 and vol_ratio >= 0.9:
+            # 정량 보정형 3단계 로직 연산 매칭
+            is_trending = curr_price > ma20 > ma60
+            is_bullish_pullback = 45 <= curr_rsi <= 65
+            is_volume_active = vol_ratio >= 0.9
+            
+            if is_trending and is_bullish_pullback and is_volume_active:
                 success_list.append(stock_info)
-            elif curr_price > ma20 > ma60:
+            elif is_trending:
                 warning_list.append(stock_info)
             else:
                 info_list.append(stock_info)
@@ -179,18 +181,15 @@ if st.button("🚀 종합 복합 스크리닝 전수 분석 시작", use_contain
     st.session_state.screening_results = {"success": success_list, "warning": warning_list, "info": info_list}
 
 # ==========================================
-# 3분할 데이터프레임 노출 및 선택 이벤트 연동
+# 3분할 대시보드 결과 출력 및 인터랙티브 바인딩
 # ==========================================
-st.markdown("---")
-st.markdown("💡 **Tip**: 아래 표에서 관심 있는 **종목의 행을 마우스로 클릭**하시면, 페이지 하단에 해당 종목의 실시간 기술적 분석 차트가 즉시 연동되어 나타납니다.")
-
+st.markdown("💡 **Tip**: 표 안에서 관심 있는 **종목의 행을 마우스로 클릭**하시면 하단에 실시간 이동평균선/RSI 결합 차트가 나타납니다.")
 col1, col2, col3 = st.columns(3)
 
 with col1:
     st.success(f"📈 매수 긍정 ({len(st.session_state.screening_results['success'])}개)")
     if st.session_state.screening_results['success']:
         df_suc = pd.DataFrame(st.session_state.screening_results['success'])
-        # Streamlit 최신기능인 선택 이벤트(on_select) 캡처
         sel_suc = st.dataframe(df_suc, use_container_width=True, hide_index=True, selection_mode="single-row", on_select="rerun")
         if sel_suc.selection.rows:
             selected_row = sel_suc.selection.rows[0]
@@ -218,8 +217,37 @@ with col3:
             st.session_state.selected_stock_code = df_inf.iloc[selected_row]['종목코드']
 
 # ==========================================
-# 하단부: 선택된 종목 인터랙티브 차트 디스플레이
+# 하단부: 차트 시각화 엔진
 # ==========================================
 if st.session_state.selected_stock_code:
     st.markdown("---")
-    draw_stock_chart(st.session_state.selected_stock_name, st.session_state.selected_stock_code)
+    name = st.session_state.selected_stock_name
+    code = st.session_state.selected_stock_code
+    
+    df_chart = get_mobile_naver_data(code, count=100)
+    if not df_chart.empty:
+        df_chart['MA20'] = df_chart['Close'].rolling(window=20).mean()
+        df_chart['MA60'] = df_chart['Close'].rolling(window=60).mean()
+        df_chart['RSI'] = calculate_rsi(df_chart['Close'])
+
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
+        fig.add_trace(god.Candlestick(
+            x=df_chart['Date'], open=df_chart['Open'], high=df_chart['High'], low=df_chart['Low'], close=df_chart['Close'],
+            name='주가', increasing_line_color='#ef5350', decreasing_line_color='#26a69a'
+        ), row=1, col=1)
+
+        fig.add_trace(god.Scatter(x=df_chart['Date'], y=df_chart['MA20'], line=dict(color='#ff9800', width=1.5), name='20일선'), row=1, col=1)
+        fig.add_trace(god.Scatter(x=df_chart['Date'], y=df_chart['MA60'], line=dict(color='#2196f3', width=1.5), name='60일선'), row=1, col=1)
+        fig.add_trace(god.Scatter(x=df_chart['Date'], y=df_chart['RSI'], line=dict(color='#9c27b0', width=1.5), name='RSI'), row=2, col=1)
+        
+        fig.add_hline(y=65, line_dash="dash", line_color="red", line_width=1, row=2, col=1)
+        fig.add_hline(y=45, line_dash="dash", line_color="blue", line_width=1, row=2, col=1)
+
+        fig.update_layout(
+            title=f"📈 {name} ({code}) 기술적 지표 결합 분석 차트",
+            yaxis_title="주가 (원)", yaxis2_title="RSI",
+            xaxis_rangeslider_visible=False, height=500,
+            margin=dict(l=10, r=10, t=40, b=10), hovermode="x unified"
+        )
+        fig.update_yaxes(range=[10, 90], row=2, col=1)
+        st.plotly_chart(fig, use_container_width=True)
