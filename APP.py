@@ -1,42 +1,17 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import FinanceDataReader as fdr
 import requests
 import xml.etree.ElementTree as ET
+import re
 
 # 모바일 화면 최적화 세팅
 st.set_page_config(page_title="하이모바일 주식 매니저", layout="centered")
 
 st.title("📱 하이모바일 맞춤형 주식 매니저")
-st.caption("FinanceDataReader 금융 전용 마스터 엔진 탑재")
+st.caption("순정 내장 모바일 파싱 엔진 탑재 (설치 에러 완전 해결)")
 
-# ==========================================
-# [핵심] 1. 차단 없는 전용 엔진 기반 전 종목 사전 구축
-# ==========================================
-@st.cache_data(ttl=86400)
-def load_perfect_company_map():
-    """전용 금융 패키지를 이용해 코스피, 코스닥, 코넥스 상장 전 종목의 이름을 완벽히 가져옵니다."""
-    try:
-        # KRX 상장 주식 전체 마스터 데이터 로드 (차단 걱정 없음)
-        df_krx = fdr.StockListing('KRX')
-        
-        # 종목코드 자릿수 6자리 문자열로 안전하게 보정
-        df_krx['Code'] = df_krx['Code'].astype(str).str.zfill(6)
-        
-        # 데이터프레임을 {'005930': '삼성전자'} 형태의 딕셔너리로 즉시 변환
-        return dict(zip(df_krx['Code'], df_krx['Name']))
-    except Exception:
-        # 비상용 최후의 대형주 백업 가상 맵
-        return {
-            "005930": "삼성전자", "000660": "SK하이닉스", "005380": "현대차", 
-            "000270": "기아", "064350": "현대로템", "066570": "LG전자"
-        }
-
-# 무적의 마스터 사전 가동
-krx_company_map = load_perfect_company_map()
-
-# 관심종목 리스트 초기화 (기본 세팅)
+# 1. 관심종목 리스트 초기화 (기본 세팅)
 if "my_stocks" not in st.session_state:
     st.session_state["my_stocks"] = {
         "삼성전자": "005930",
@@ -45,6 +20,28 @@ if "my_stocks" not in st.session_state:
         "기아": "000270",
         "현대로템": "064350"
     }
+
+def get_company_name_pure(code):
+    """[무설치 우회] 네이버 모바일 웹 페이지에서 순정 자원으로 회사 이름을 직접 추출합니다."""
+    try:
+        # 스마트폰으로 네이버 증권 모바일 홈에 접속하는 것으로 완벽 위장
+        url = f"https://m.stock.naver.com/domestic/stock/{code}/total"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1'
+        }
+        response = requests.get(url, headers=headers, timeout=5)
+        html_text = response.text
+        
+        # HTML 내부의 주가 정보 타이틀 태그 구역 검색 (<title>삼성전자 : 네이버페이 증권</title>)
+        match = re.search(r'<title>(.*?)\s*:\s*네이버페이\s*증권</title>', html_text)
+        if match:
+            company_name = match.group(1).strip()
+            # 정상적인 회사명인 경우 반환
+            if company_name and "페이지를 찾을 수 없습니다" not in company_name:
+                return company_name
+    except Exception:
+        pass
+    return None
 
 def get_mobile_naver_data(code, count=100):
     """일반 스마트폰 브라우저로 위장하여 네이버에서 주가 데이터를 안전하게 가져옵니다."""
@@ -100,8 +97,9 @@ with st.expander("⭐ 나만의 관심종목 추가/삭제 하기"):
                 # 숫자 외 문자 제거 및 6자리 맞춤
                 clean_code = ''.join(filter(str.isdigit, add_code)).zfill(6)
                 
-                # 금융 전용 내장 마스터 사전에서 회사 이름 즉시 추출
-                auto_stock_name = krx_company_map.get(clean_code)
+                # 추가 설치 없는 순정 모바일 파싱 엔진 가동
+                with st.spinner("모바일 네트워크에서 회사명 추출 중..."):
+                    auto_stock_name = get_company_name_pure(clean_code)
                 
                 if auto_stock_name:
                     # 완벽하게 찾아온 한글 상호명으로 자동 추가
@@ -109,7 +107,7 @@ with st.expander("⭐ 나만의 관심종목 추가/삭제 하기"):
                     st.success(f"🎉 **'{auto_stock_name} ({clean_code})'** 등록 성공!")
                     st.rerun()
                 else:
-                    st.error("거래소에 등록되지 않은 코드이거나 입력 오류입니다. 번호를 다시 확인해 주세요.")
+                    st.error("존재하지 않는 종목코드이거나 상장 폐지된 번호입니다. 다시 확인해 주세요.")
             else:
                 st.error("종목코드를 입력해주세요.")
                 
