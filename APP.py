@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import FinanceDataReader as fdr
 import requests
 import xml.etree.ElementTree as ET
 
@@ -8,33 +9,32 @@ import xml.etree.ElementTree as ET
 st.set_page_config(page_title="하이모바일 주식 매니저", layout="centered")
 
 st.title("📱 하이모바일 맞춤형 주식 매니저")
-st.caption("한국거래소(KRX) 공식 마스터 사전 탑재 (이름 미인식 완벽 해결)")
+st.caption("FinanceDataReader 금융 전용 마스터 엔진 탑재")
 
 # ==========================================
-# [핵심] 1. 대한민국 전 종목 이름 사전 자동 빌드
+# [핵심] 1. 차단 없는 전용 엔진 기반 전 종목 사전 구축
 # ==========================================
-@st.cache_data(ttl=86400) # 하루 동안 거래소 데이터를 메모리에 보관하여 속도를 극대화합니다.
-def load_krx_company_map():
-    """한국거래소(KRX)에서 현재 상장된 모든 종목의 코드와 이름 마스터를 가져옵니다."""
+@st.cache_data(ttl=86400)
+def load_perfect_company_map():
+    """전용 금융 패키지를 이용해 코스피, 코스닥, 코넥스 상장 전 종목의 이름을 완벽히 가져옵니다."""
     try:
-        # 상장법인목록 다운로드 공식 URL
-        url = 'http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13'
-        df_krx = pd.read_html(url, header=0)[0]
+        # KRX 상장 주식 전체 마스터 데이터 로드 (차단 걱정 없음)
+        df_krx = fdr.StockListing('KRX')
         
-        # 종목코드를 6자리 문자열로 이쁘게 정렬 (예: 5930 -> '005930')
-        df_krx['종목코드'] = df_krx['종목코드'].astype(str).str.zfill(6)
+        # 종목코드 자릿수 6자리 문자열로 안전하게 보정
+        df_krx['Code'] = df_krx['Code'].astype(str).str.zfill(6)
         
-        # {'005930': '삼성전자', '064350': '현대로템'} 구조의 딕셔너리로 변환
-        return dict(zip(df_krx['종목코드'], df_krx['회사명']))
+        # 데이터프레임을 {'005930': '삼성전자'} 형태의 딕셔너리로 즉시 변환
+        return dict(zip(df_krx['Code'], df_krx['Name']))
     except Exception:
-        # 혹시나 거래소 서버가 일시 마비될 때를 대비한 최소한의 대형주 백업
+        # 비상용 최후의 대형주 백업 가상 맵
         return {
             "005930": "삼성전자", "000660": "SK하이닉스", "005380": "현대차", 
             "000270": "기아", "064350": "현대로템", "066570": "LG전자"
         }
 
-# 거래소 마스터 사전 가동
-krx_company_map = load_krx_company_map()
+# 무적의 마스터 사전 가동
+krx_company_map = load_perfect_company_map()
 
 # 관심종목 리스트 초기화 (기본 세팅)
 if "my_stocks" not in st.session_state:
@@ -47,7 +47,7 @@ if "my_stocks" not in st.session_state:
     }
 
 def get_mobile_naver_data(code, count=100):
-    """일반 스마트폰 브라우저로 위장하여 네이버에서 주가 데이터를 가져옵니다."""
+    """일반 스마트폰 브라우저로 위장하여 네이버에서 주가 데이터를 안전하게 가져옵니다."""
     try:
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count={count}&requestType=0"
         headers = {
@@ -97,19 +97,19 @@ with st.expander("⭐ 나만의 관심종목 추가/삭제 하기"):
         
         if st.button("➕ 관심종목 등록", use_container_width=True):
             if add_code:
-                # 숫자만 정제 후 6자리 보정
+                # 숫자 외 문자 제거 및 6자리 맞춤
                 clean_code = ''.join(filter(str.isdigit, add_code)).zfill(6)
                 
-                # [해결책] 외부 API를 안 거치고, 내장된 KRX 사전에서 바로 이름을 뽑아옵니다.
+                # 금융 전용 내장 마스터 사전에서 회사 이름 즉시 추출
                 auto_stock_name = krx_company_map.get(clean_code)
                 
                 if auto_stock_name:
-                    # 마스터 사전에 존재하면 즉시 세션 상태에 등록
+                    # 완벽하게 찾아온 한글 상호명으로 자동 추가
                     st.session_state["my_stocks"][auto_stock_name] = clean_code
                     st.success(f"🎉 **'{auto_stock_name} ({clean_code})'** 등록 성공!")
                     st.rerun()
                 else:
-                    st.error("대한민국 거래소에 등록되지 않은 종목코드입니다. 번호를 다시 확인해 주세요.")
+                    st.error("거래소에 등록되지 않은 코드이거나 입력 오류입니다. 번호를 다시 확인해 주세요.")
             else:
                 st.error("종목코드를 입력해주세요.")
                 
@@ -119,7 +119,7 @@ with st.expander("⭐ 나만의 관심종목 추가/삭제 하기"):
         if st.button("❌ 선택 종목 삭제", use_container_width=True):
             if delete_target in st.session_state["my_stocks"]:
                 del st.session_state["my_stocks"][delete_target]
-                st.warning(f"'{delete_target}' 종목이 deleted되었습니다.")
+                st.warning(f"'{delete_target}' 종목이 삭제되었습니다.")
                 st.rerun()
 
 st.markdown("---")
@@ -139,7 +139,6 @@ else:
     
     # 분석 시작 버튼
     if st.button("🚀 모멘텀 분석 시작", use_container_width=True):
-        # 주가 데이터 가져오기
         df = get_mobile_naver_data(target_ticker)
         
         if df.empty:
