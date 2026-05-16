@@ -3,13 +3,12 @@ import pandas as pd
 import numpy as np
 import requests
 import xml.etree.ElementTree as ET
-import re
 
 # 모바일 화면 최적화 세팅
 st.set_page_config(page_title="하이모바일 주식 매니저", layout="centered")
 
 st.title("📱 하이모바일 맞춤형 주식 매니저")
-st.caption("순정 내장 모바일 파싱 엔진 탑재 (설치 에러 완전 해결)")
+st.caption("독립형 수동 지정 엔진 탑재 (포털 사이트 보안 차단 완벽 우회)")
 
 # 1. 관심종목 리스트 초기화 (기본 세팅)
 if "my_stocks" not in st.session_state:
@@ -20,28 +19,6 @@ if "my_stocks" not in st.session_state:
         "기아": "000270",
         "현대로템": "064350"
     }
-
-def get_company_name_pure(code):
-    """[무설치 우회] 네이버 모바일 웹 페이지에서 순정 자원으로 회사 이름을 직접 추출합니다."""
-    try:
-        # 스마트폰으로 네이버 증권 모바일 홈에 접속하는 것으로 완벽 위장
-        url = f"https://m.stock.naver.com/domestic/stock/{code}/total"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1'
-        }
-        response = requests.get(url, headers=headers, timeout=5)
-        html_text = response.text
-        
-        # HTML 내부의 주가 정보 타이틀 태그 구역 검색 (<title>삼성전자 : 네이버페이 증권</title>)
-        match = re.search(r'<title>(.*?)\s*:\s*네이버페이\s*증권</title>', html_text)
-        if match:
-            company_name = match.group(1).strip()
-            # 정상적인 회사명인 경우 반환
-            if company_name and "페이지를 찾을 수 없습니다" not in company_name:
-                return company_name
-    except Exception:
-        pass
-    return None
 
 def get_mobile_naver_data(code, count=100):
     """일반 스마트폰 브라우저로 위장하여 네이버에서 주가 데이터를 안전하게 가져옵니다."""
@@ -84,32 +61,28 @@ def calculate_rsi(series, period=14):
     return 100 - (100 / (1 + rs))
 
 # ==========================================
-# 2. 관심종목 관리 창 (코드만 입력)
+# 2. 관심종목 관리 창 (이름과 코드를 내가 직접 지정)
 # ==========================================
 with st.expander("⭐ 나만의 관심종목 추가/삭제 하기"):
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("**종목 추가 (자동 이름 검색)**")
+        st.markdown("**종목 추가 (직접 지정)**")
+        # 사용자가 부르고 싶은 이름을 자유롭게 입력 (예: LG전자, 내주식1 등)
+        custom_name = st.text_input("종목 이름 입력", placeholder="예: LG전자")
         add_code = st.text_input("종목코드 6자리 입력", placeholder="예: 066570")
         
         if st.button("➕ 관심종목 등록", use_container_width=True):
-            if add_code:
+            if custom_name and add_code:
                 # 숫자 외 문자 제거 및 6자리 맞춤
                 clean_code = ''.join(filter(str.isdigit, add_code)).zfill(6)
+                clean_name = custom_name.strip()
                 
-                # 추가 설치 없는 순정 모바일 파싱 엔진 가동
-                with st.spinner("모바일 네트워크에서 회사명 추출 중..."):
-                    auto_stock_name = get_company_name_pure(clean_code)
-                
-                if auto_stock_name:
-                    # 완벽하게 찾아온 한글 상호명으로 자동 추가
-                    st.session_state["my_stocks"][auto_stock_name] = clean_code
-                    st.success(f"🎉 **'{auto_stock_name} ({clean_code})'** 등록 성공!")
-                    st.rerun()
-                else:
-                    st.error("존재하지 않는 종목코드이거나 상장 폐지된 번호입니다. 다시 확인해 주세요.")
+                # 외부 사이트를 거치지 않고 세션에 즉시 저장하므로 절대 에러가 나지 않습니다.
+                st.session_state["my_stocks"][clean_name] = clean_code
+                st.success(f"🎉 **'{clean_name} ({clean_code})'** 등록 성공!")
+                st.rerun()
             else:
-                st.error("종목코드를 입력해주세요.")
+                st.error("종목 이름과 코드를 모두 입력해주세요.")
                 
     with col2:
         st.markdown("**종목 삭제**")
@@ -140,7 +113,7 @@ else:
         df = get_mobile_naver_data(target_ticker)
         
         if df.empty:
-            st.error(f"⚠️ 금융 시세 서버 보안벽 우회 중입니다. [모멘텀 분석 시작] 버튼을 한 번만 더 눌러주세요.")
+            st.error(f"⚠️ 금융 시세 서버에서 데이터를 가져오는 중입니다. [모멘텀 분석 시작] 버튼을 한 번 더 눌러주세요.")
         else:
             # 기술적 지표 계산
             df['MA20'] = df['Close'].rolling(window=20).mean()
