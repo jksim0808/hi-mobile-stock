@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import requests
 import xml.etree.ElementTree as ET
-import json
 
 # 웹 페이지 설정
 st.set_page_config(page_title="하이모바일 주식 분석기", layout="wide")
@@ -12,31 +11,42 @@ st.title("📈 네이버 금융 연동 상승 모멘텀 분석기")
 st.sidebar.header("설정")
 
 # 사용자가 직접 한국 주식 종목코드 입력
-target_stocks = st.sidebar.text_input("분석할 종목 코드를 입력하세요 (쉼표 구분)", "005930, 000660, 005380, 000270, 066570")
+target_stocks = st.sidebar.text_input("분석할 종목 코드를 입력하세요 (쉼표 구분)", "005930, 000660, 005380, 000270, 064350")
 tickers = [t.strip() for t in target_stocks.split(",")]
 
-def get_exact_company_name(code):
-    """[최종 솔루션] 웹 페이지 크롤링 대신, 네이버 자체 실시간 검색 API 데이터에서 회사명을 직접 추출합니다."""
+def get_fallback_company_name(code):
+    """[최종 마스터 안전장치] 주말/야간에도 차단되지 않는 네이버 차트 설정 정보에서 순수 회사명을 추출합니다."""
     try:
-        # 네이버 주식 내부 검색/시세 API 엔드포인트
+        # 이 주소는 주말에도 항상 열려 있으며, 해당 종목의 한글 이름을 포함하고 있습니다.
+        url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=1&requestType=0"
+        response = requests.get(url)
+        root = ET.fromstring(response.text)
+        
+        # XML 구조의 <chartinfo item="삼성전자" ...> 에서 item 속성(회사명)을 가져옵니다.
+        chart_info = root.find('.//chartinfo')
+        if chart_info is not None:
+            name = chart_info.get('item')
+            if name:
+                return name
+    except Exception:
+        pass
+    return f"종목({code})"
+
+def get_exact_company_name(code):
+    """실시간 API 조회를 시도하고, 주말/야간이라 실패하면 2차 마스터 장치를 가동합니다."""
+    try:
         url = f"https://polling.finance.naver.com/api/realtime/domestic/stock/{code}"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         response = requests.get(url, headers=headers)
-        
-        # JSON 데이터 분석
         data = response.json()
-        stock_name = data['result']['areas'][0]['datas'][0]['nm'] # 'nm' 필드가 순수 한글 회사명입니다.
+        stock_name = data['result']['areas'][0]['datas'][0]['nm']
         if stock_name:
             return stock_name
     except Exception:
         pass
-        
-    # 백업용 대형주 사전
-    backup_map = {
-        "005930": "삼성전자", "000660": "SK하이닉스", "005380": "현대차", 
-        "000270": "기아", "012330": "현대모비스", "066570": "LG전자"
-    }
-    return backup_map.get(code, f"종목({code})")
+    
+    # 주말/야간 조회를 위한 구원 투수 등판
+    return get_fallback_company_name(code)
 
 def get_naver_stock_data(code, count=100):
     """네이버 금융에서 일별 시세를 가져오는 함수"""
@@ -82,7 +92,7 @@ if st.sidebar.button("네이버 데이터 분석 시작"):
         if len(clean_ticker) < 6:
             clean_ticker = clean_ticker.zfill(6)
         
-        # 오류가 나던 캐시 및 거래소 데이터 매핑을 완전히 걷어내고 실시간 데이터 직접 조회
+        # 주말/장마감 상관없이 상장된 모든 종목의 이름을 가져오는 함수 호출
         stock_name = get_exact_company_name(clean_ticker)
         
         with st.container():
