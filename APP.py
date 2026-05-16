@@ -10,7 +10,7 @@ import re
 st.set_page_config(page_title="하이모바일 주식 매니저", layout="wide")
 
 st.title("📊 하이모바일 커스텀 주식 스크리닝 매니저")
-st.caption("내 마음대로 편집하는 실시간 모멘텀 필터링 시스템")
+st.caption("RSI 지표 보정 및 대세 추세 필터링 통합 시스템")
 
 # 기본 가이드라인용 50대 종목 초기 텍스트 세팅
 DEFAULT_STOCKS_TEXT = (
@@ -60,28 +60,25 @@ def calculate_rsi(series, period=14):
     return 100 - (100 / (1 + (ema_up / ema_down)))
 
 # ==========================================
-# [신설] 3단계 판단 로직 구체적 가이드라인 탑재
+# 보정된 3단계 판단 로직 가이드라인 탑재
 # ==========================================
-with st.expander("📖 시스템 3단계 핵심 판단 로직 및 매매 전략 설명서", expanded=False):
+with st.expander("📖 보정형(Trend-Adaptive) 3단계 판단 로직 매매 전략", expanded=False):
     st.markdown("""
-    본 시스템은 주가의 **중장기 추세 방향성(이동평균선)**과 **단기 수급의 심리적 과열 상태(RSI)**를 결합하여 투자 리스크를 최소화하도록 설계된 스크리닝 엔진입니다.
+    기존 RSI의 단점(강세장에서 지표가 내려오지 않는 현상)을 극복하기 위해 **장기 추세 추종형 보정 필터**를 적용했습니다.
     
-    ### 1️⃣ 📈 매수 긍정 (상승 모멘텀 포착)
-    *   **정량적 기술 지표 기준**: `현재가 > 20일 이평선 > 60일 이평선` **AND** `50 < RSI < 70`
-    *   **차트 해석**: 주가가 중장기 상승 가속도 구간(정배열 상승 추세)에 안착해 있으면서, 단기 과열권(RSI 70 이상)에 도달하기 직전의 가장 탄력적인 무릎~어깨 구간입니다. 
-    *   **대응 전략**: 기관·외인 수급 유입이 가장 강한 타이밍이므로 **신규 진입 및 분할 매수** 관점에서 매우 유망합니다.
+    ### 1️⃣ 📈 매수 긍정 (강세장 안정적 눌림목 구간)
+    *   **정량적 기준**: `현재가 > 20일선 > 60일선(정배열)` **AND** `45 ≤ RSI ≤ 65`
+    *   **보정 원리**: 우량주가 대세 상승 국면에 있을 때는 RSI가 30(과매도)까지 잘 떨어지지 않습니다. 따라서 강세장 유지를 전제로 단기 과열(RSI 70 이상)을 식히고 턴어라운드하는 **RSI 45~65의 허리~어깨 진입 타이밍**을 가장 안전한 매수 적기로 포착합니다.
     
-    ### 2️⃣ ⚠️ 진입 조율 필요 (추세 지속 및 과열 주의)
-    *   **정량적 기술 지표 기준**: `현재가 > 20일 이평선 > 60일 이평선` **AND** `(RSI ≥ 70 또는 RSI ≤ 50)`
-    *   **차트 해석**: 대세 상승 추세(정배열)는 유지되고 있으나 단기 조건이 다른 경우입니다.
-        *   **RSI 70 이상 (과매수)**: 단기 급등으로 심리적 과열권에 진입해 언제든 이익실현 매물이 나올 수 있는 고점 구간입니다.
-        *   **RSI 50 이하 (눌림목/일시 이탈)**: 상승 추세 속에서 일시적인 숨고르기나 거래량 감소로 단기 모멘텀이 죽어있는 국면입니다.
-    *   **대응 전략**: 이미 보유 중이라면 **분할 익절**을 고려하고, 신규 진입의 경우 무리한 추격 매수를 자제하고 **눌림목 조정을 기다려 가격 메리트가 생길 때** 들어가는 것이 좋습니다.
+    ### 2️⃣ ⚠️ 진입 조율 필요 (단기 급등 과열 또는 추세 둔화)
+    *   **정량적 기준**: `현재가 > 20일선 > 60일선(정배열)` **AND** `(RSI > 65 또는 RSI < 45)`
+    *   **보정 원리**:
+        *   **RSI 65 초과 (단기 과열 고점권)**: 추세는 좋으나 과매수 구역에 임박하여 언제든 차익실현 매물이 쏟아질 수 있는 자리입니다. (추격 매수 자제, 보유자 영역)
+        *   **RSI 45 미만 (추세 붕괴 위험 조짐)**: 정배열은 유지 중이나 단기 낙폭이 깊어 20일선 이탈 후 매물이 쌓이는 리스크 구간입니다. 지지선 확인이 선행되어야 합니다.
     
-    ### 3️⃣ 💤 관망 권장 (역배열 하락 추세 또는 횡보 소외)
-    *   **정량적 기술 지표 기준**: 위의 상승 정배열 조건을 충족하지 못하는 모든 케이스 (`현재가 < 20일 이평선` 또는 `20일 이평선 < 60일 이평선` 등)
-    *   **차트 해석**: 중장기 매물대가 머리 위에 얹어져 있는 하락 역배열 구간이거나, 거래량이 실리지 않아 방향성 없이 지루하게 기어가는 소외 국면입니다.
-    *   **대응 전략**: 주가가 싸 보인다는 이유로 섣부르게 물타기를 하거나 진입하면 장기 소외될 위험이 큽니다. 추세 턴어라운드(골든크로스)가 확실히 확인될 때까지 **자금을 보존하며 관망**하는 것이 안전합니다.
+    ### 3️⃣ 💤 관망 권장 (하락 역배열 또는 박스권 소외)
+    *   **정량적 기준**: 위의 정배열 조건을 만족하지 못하는 모든 역배열/데드크로스 종목 (`현재가 < 20일선` 혹은 `20일선 < 60일선`)
+    *   **보정 원리**: 머리 위의 매물 저항이 심하고 기관·외인의 수급 둔화가 지속되는 역배열 구간입니다. RSI가 아무리 낮아도(과매도 상태) 주가가 추가 하락할 위험이 크므로 확실한 추세 전환 전까지 관망을 유지합니다.
     """)
 
 # ==========================================
@@ -112,13 +109,13 @@ st.info(f"📋 현재 설정된 분석 대상 종목: 총 **{len(current_stocks_
 # ==========================================
 # 메인 제어 분석 실행
 # ==========================================
-if st.button("🚀 설정된 종목 실시간 전수 분석 시작", use_container_width=True):
+if st.button("🚀 보정형 스크리닝 엔진 전수 분석 시작", use_container_width=True):
     if not current_stocks_map:
         st.error("분석할 종목이 없습니다. 위의 편집창에 '종목명:종목코드' 형태로 입력되어 있는지 확인해 주세요.")
     else:
-        group_success = []  # 📈 매수 긍정
-        group_warning = []  # ⚠️ 진입 조율 필요
-        group_info = []     # 💤 관망 권장
+        group_success = []  # 📈 매수 긍정 (정배열 골디락스)
+        group_warning = []  # ⚠️ 진입 조율 필요 (과열 또는 지지선 이탈 조짐)
+        group_info = []     # 💤 관망 권장 (역배열 및 횡보)
         
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -126,7 +123,7 @@ if st.button("🚀 설정된 종목 실시간 전수 분석 시작", use_contain
         total_stocks = len(current_stocks_map)
         
         for idx, (name, code) in enumerate(current_stocks_map.items()):
-            status_text.text(f"⏳ 데이터 연산 중 ({idx+1}/{total_stocks}): {name} ({code})")
+            status_text.text(f"⏳ 데이터 연산 및 보정 필터링 중 ({idx+1}/{total_stocks}): {name} ({code})")
             progress_bar.progress((idx + 1) / total_stocks)
             
             df = get_mobile_naver_data(code)
@@ -135,6 +132,7 @@ if st.button("🚀 설정된 종목 실시간 전수 분석 시작", use_contain
                 df = get_mobile_naver_data(code)
                 
             if not df.empty:
+                # 이동평균선 및 지표 연산
                 df['MA20'] = df['Close'].rolling(window=20).mean()
                 df['MA60'] = df['Close'].rolling(window=60).mean()
                 df['RSI'] = calculate_rsi(df['Close'])
@@ -151,20 +149,24 @@ if st.button("🚀 설정된 종목 실시간 전수 분석 시작", use_contain
                     "RSI": f"{curr_rsi:.1f}"
                 }
                 
-                # 정량적 수치에 입각한 3단계 분류 매칭
+                # [보정 핵심] 장기 추세 정배열 유무 판정
                 is_trending = curr_price > ma20 > ma60
-                is_momentum = 50 < curr_rsi < 70
                 
-                if is_trending and is_momentum:
+                # 강세장 속 안전한 무릎~어깨 수급 강도 대입 (45선 지지 및 65 이하 안정권)
+                is_bullish_pullback = 45 <= curr_rsi <= 65
+                
+                if is_trending and is_bullish_pullback:
                     group_success.append(stock_info)
                 elif is_trending:
+                    # 정배열이지만 과매수(RSI > 65)이거나 단기 과매도(RSI < 45)로 일탈한 경우
                     group_warning.append(stock_info)
                 else:
+                    # 이평선 역배열, 주가가 이평선 아래에 침전해 있는 역추세 경우
                     group_info.append(stock_info)
                     
-            time.sleep(0.04)
+            time.sleep(0.04) # 금융 서버 트래픽 마진
             
-        status_text.text(f"✅ 총 {total_stocks}개 종목의 실시간 스크리닝이 완료되었습니다!")
+        status_text.text(f"✅ 총 {total_stocks}개 종목의 추세 보정 스크리닝이 완료되었습니다!")
         progress_bar.empty()
         
         # ==========================================
@@ -175,7 +177,7 @@ if st.button("🚀 설정된 종목 실시간 전수 분석 시작", use_contain
         
         with col1:
             st.success(f"📈 매수 긍정 ({len(group_success)}개)")
-            st.caption("상승 추세(정배열) + 적정 모멘텀 수치 진입")
+            st.caption("강세 정배열 + RSI 45~65 사이의 골디락스/눌림목")
             if group_success:
                 st.dataframe(pd.DataFrame(group_success), use_container_width=True, hide_index=True)
             else:
@@ -183,15 +185,15 @@ if st.button("🚀 설정된 종목 실시간 전수 분석 시작", use_contain
                 
         with col2:
             st.warning(f"⚠️ 진입 조율 필요 ({len(group_warning)}개)")
-            st.caption("상승세는 유지 중이나 과매수 구역이거나 추세 확인 필요")
+            st.caption("정배열이나 단기 과열(RSI>65) 혹은 단기 낙폭 과대(RSI<45)")
             if group_warning:
                 st.dataframe(pd.DataFrame(group_warning), use_container_width=True, hide_index=True)
             else:
-                st.info("조건에 일치하는 종 info가 없습니다.")
+                st.info("조건에 일치하는 종목이 없습니다.")
                 
         with col3:
             st.info(f"💤 관망 권장 ({len(group_info)}개)")
-            st.caption("현재 하락 추세 구간이거나 박스권 횡보 중인 종목")
+            st.caption("현재 하락 역배열 구간이거나 박스권 소외 종목")
             if group_info:
                 st.dataframe(pd.DataFrame(group_info), use_container_width=True, hide_index=True)
             else:
